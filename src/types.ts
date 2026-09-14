@@ -1,13 +1,9 @@
+import type { User } from "@prisma/client";
 import type { Request } from "express";
 
-export interface UserRow {
-  id: string;
-  name: string;
-  email: string;
-  password_hash: string | null;
-  google_id: string | null;
-  created_at: string;
-}
+/** Re-exported so services/routes import "the user row type" from one place
+ * rather than reaching into `@prisma/client` directly everywhere. */
+export type UserRow = User;
 
 export interface PublicUser {
   id: string;
@@ -21,7 +17,7 @@ export function toPublicUser(row: UserRow): PublicUser {
     id: row.id,
     name: row.name,
     email: row.email,
-    provider: row.google_id ? "google" : "local",
+    provider: row.googleId ? "google" : "local",
   };
 }
 

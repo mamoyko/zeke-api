@@ -1,4 +1,4 @@
-import { db } from "../db";
+import { prisma } from "../db";
 import { dayKey, wordForDay } from "../data/dailyWords";
 
 export interface DailyStatus {
@@ -10,37 +10,31 @@ export interface DailyStatus {
 }
 
 interface StreakRow {
-  user_id: string;
+  userId: string;
   current: number;
   longest: number;
-  last_completed_date: string | null;
-}
-
-interface CompletionRow {
-  won: number;
-  mistakes: number;
+  lastCompletedDate: string | null;
 }
 
 function yesterday(dateKey: string): string {
   return dayKey(new Date(Date.parse(`${dateKey}T00:00:00Z`) - 86_400_000));
 }
 
-function getStreakRow(userId: string): StreakRow {
-  const row = db
-    .prepare("SELECT * FROM streaks WHERE user_id = ?")
-    .get(userId) as StreakRow | undefined;
-  return row ?? { user_id: userId, current: 0, longest: 0, last_completed_date: null };
+async function getStreakRow(userId: string): Promise<StreakRow> {
+  const row = await prisma.streak.findUnique({ where: { userId } });
+  return row ?? { userId, current: 0, longest: 0, lastCompletedDate: null };
 }
 
-function saveStreakRow(row: StreakRow): void {
-  db.prepare(
-    `INSERT INTO streaks (user_id, current, longest, last_completed_date)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(user_id) DO UPDATE SET
-       current = excluded.current,
-       longest = excluded.longest,
-       last_completed_date = excluded.last_completed_date`,
-  ).run(row.user_id, row.current, row.longest, row.last_completed_date);
+function saveStreakRow(row: StreakRow): Promise<unknown> {
+  return prisma.streak.upsert({
+    where: { userId: row.userId },
+    create: row,
+    update: {
+      current: row.current,
+      longest: row.longest,
+      lastCompletedDate: row.lastCompletedDate,
+    },
+  });
 }
 
 /** The word every player gets today. No auth needed to know *what* it is — only completing it needs an account, to track a streak against. */
@@ -50,17 +44,17 @@ export function today(): { date: string; word: string; category: string } {
   return { date, word, category };
 }
 
-export function getStatus(userId: string): DailyStatus {
+export async function getStatus(userId: string): Promise<DailyStatus> {
   const date = dayKey();
-  const completion = db
-    .prepare("SELECT won, mistakes FROM daily_completions WHERE user_id = ? AND date = ?")
-    .get(userId, date) as CompletionRow | undefined;
-  const streak = getStreakRow(userId);
+  const completion = await prisma.dailyCompletion.findUnique({
+    where: { userId_date: { userId, date } },
+  });
+  const streak = await getStreakRow(userId);
 
   return {
     date,
-    playedToday: completion !== undefined,
-    won: completion ? completion.won === 1 : null,
+    playedToday: completion !== null,
+    won: completion ? completion.won : null,
     streak: streak.current,
     longest: streak.longest,
   };
@@ -73,35 +67,37 @@ export function getStatus(userId: string): DailyStatus {
  * what makes "one shot" a server-enforced rule rather than just an honor
  * system in the client.
  */
-export function complete(userId: string, won: boolean, mistakes: number): DailyStatus {
+export async function complete(
+  userId: string,
+  won: boolean,
+  mistakes: number,
+): Promise<DailyStatus> {
   const date = dayKey();
 
-  const already = db
-    .prepare("SELECT won, mistakes FROM daily_completions WHERE user_id = ? AND date = ?")
-    .get(userId, date) as CompletionRow | undefined;
+  const already = await prisma.dailyCompletion.findUnique({
+    where: { userId_date: { userId, date } },
+  });
   if (already) {
     return getStatus(userId);
   }
 
-  db.prepare(
-    "INSERT INTO daily_completions (user_id, date, won, mistakes) VALUES (?, ?, ?, ?)",
-  ).run(userId, date, won ? 1 : 0, mistakes);
+  await prisma.dailyCompletion.create({ data: { userId, date, won, mistakes } });
 
-  const streak = getStreakRow(userId);
+  const streak = await getStreakRow(userId);
   if (won) {
     // A streak only continues if yesterday's win is what's on record — any
     // gap (a missed day, or yesterday being a loss) restarts it at 1 rather
     // than 0, since today's win still counts as day one of a new streak.
-    streak.current = streak.last_completed_date === yesterday(date) ? streak.current + 1 : 1;
+    streak.current = streak.lastCompletedDate === yesterday(date) ? streak.current + 1 : 1;
     streak.longest = Math.max(streak.longest, streak.current);
-    streak.last_completed_date = date;
+    streak.lastCompletedDate = date;
   } else {
-    // A loss breaks the current streak. `last_completed_date` deliberately
+    // A loss breaks the current streak. `lastCompletedDate` deliberately
     // stays untouched here — it only ever records the date of a *win*, so a
     // win tomorrow correctly sees "yesterday was not a win" and restarts at 1.
     streak.current = 0;
   }
-  saveStreakRow(streak);
+  await saveStreakRow(streak);
 
   return getStatus(userId);
 }

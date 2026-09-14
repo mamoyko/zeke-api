@@ -1,0 +1,20 @@
+# Local Postgres for development. `docker compose up -d` and the defaults in
+# .env.example point straight at it — nothing else to configure.
+#
+# Not needed at all if you'd rather point DATABASE_URL at a hosted Postgres
+# (Neon, Supabase, RDS, ...) instead; this is purely a local-dev convenience.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: zeke
+      POSTGRES_PASSWORD: zeke
+      POSTGRES_DB: zeke
+    ports:
+      - "5433:5432" # host 5433, since 5432 is often already taken by another project
+    volumes:
+      - zeke_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  zeke_postgres_data:

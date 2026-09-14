@@ -39,9 +39,9 @@ authRoutes.post(
     if (!parsed.success) throw badRequest("Enter a valid email and password.");
 
     const { email, password } = parsed.data;
-    const user = findByEmail(email);
+    const user = await findByEmail(email);
     if (!user) throw unauthorized("No account found for that email.");
-    if (!user.password_hash) {
+    if (!user.passwordHash) {
       throw unauthorized("This email uses Google Sign-In. Continue with Google instead.");
     }
     if (!(await verifyPassword(user, password))) {
@@ -66,7 +66,7 @@ authRoutes.post(
 
     const { code, codeVerifier, redirectUri } = parsed.data;
     const profile = await exchangeGoogleCode(code, codeVerifier, redirectUri);
-    const user = findOrCreateGoogleUser(profile.googleId, profile.email, profile.name);
+    const user = await findOrCreateGoogleUser(profile.googleId, profile.email, profile.name);
 
     res.json({ token: signToken(user.id), user: toPublicUser(user) });
   }),
@@ -76,7 +76,7 @@ authRoutes.get(
   "/me",
   requireAuth,
   asyncHandler(async (req, res) => {
-    const user = findById((req as AuthedRequest).userId);
+    const user = await findById((req as AuthedRequest).userId);
     if (!user) throw unauthorized();
     res.json({ user: toPublicUser(user) });
   }),

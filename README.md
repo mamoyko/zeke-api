@@ -12,34 +12,44 @@ shouldn't hold:
   streak. This has to live on a server almost by definition: everyone needs
   the *same* word, and a streak has to survive the app being reinstalled.
 
-Node.js + Express + TypeScript, storing everything in one SQLite file via
-Node's own built-in `node:sqlite` — no separate database server to install,
-no native module to compile.
+Node.js + Express + TypeScript, with **Postgres via Prisma** for storage.
 
 ## Running it
 
-Requires **Node.js 22.5 or newer** (this was built and tested against 24).
+Requires **Node.js 22.5 or newer** (this was built and tested against 24) and
+**Docker** (for the local database — or skip Docker and point at a hosted
+Postgres instead, see below).
 
 ```bash
-npm install
-cp .env.example .env    # defaults work as-is; only Google needs real values
+docker compose up -d          # starts Postgres on localhost:5433
+npm install                   # also generates the Prisma client (postinstall)
+cp .env.example .env          # defaults match docker-compose.yml exactly
+npm run db:migrate            # creates the tables
 npm run dev
 ```
 
-That starts it on `http://localhost:4000` with auto-reload on save. You'll see
-one experimental-feature warning about SQLite on startup — expected, harmless,
-see [Why `node:sqlite`](#why-nodesqlite) below.
+That starts it on `http://localhost:4000` with auto-reload on save.
+
+**No Docker?** Point `DATABASE_URL` in `.env` at any Postgres instead — a free
+one from [Neon](https://neon.tech) or [Supabase](https://supabase.com) takes
+about a minute to create — then run `npm run db:migrate`. Nothing else changes.
 
 For a longer-running deployment:
 
 ```bash
-npm run build   # compiles src/ -> dist/
-npm start       # runs the compiled output
+npm run build       # compiles src/ -> dist/
+npm run db:deploy   # applies migrations without prompting (CI/production)
+npm start            # runs the compiled output
 ```
 
 Point the game at this server by setting `base_url` in the game repo's
 `auth/api_config.cfg` — it defaults to `http://localhost:4000`, so if you're
 running both on the same machine for testing, there's nothing to change.
+
+**Why Postgres 5433, not 5432?** `docker-compose.yml` maps it there on
+purpose — 5432 is the Postgres default, and a dev machine already running
+another Postgres-backed project (very likely) would collide on it. Change the
+port mapping and `DATABASE_URL` together if you'd rather use 5432.
 
 ## What's here
 
@@ -48,7 +58,8 @@ running both on the same machine for testing, there's nothing to change.
 | `src/index.ts`                    | Starts the HTTP server                          |
 | `src/app.ts`                      | Express app: middleware, routes, error handling |
 | `src/config.ts`                   | Reads `.env`; safe zero-config defaults          |
-| `src/db.ts`                       | Opens the SQLite file, creates tables if needed |
+| `prisma/schema.prisma`            | The three database models — see below           |
+| `src/db.ts`                       | The shared Prisma client                        |
 | `src/routes/auth.routes.ts`       | Signup, login, Google exchange, `/auth/me`      |
 | `src/routes/daily.routes.ts`      | Today's word, streak status, recording a result |
 | `src/services/users.service.ts`   | Password hashing, account lookups               |
@@ -122,22 +133,41 @@ clear "Google Sign-In isn't configured on this server yet" error instead of a
 stack trace, and local email/password accounts and the Daily Challenge both
 work regardless.
 
-## Why `node:sqlite`
+## The database
 
-No native module to install (no build tools, no prebuilt-binary version
-mismatches — a real risk with something like `better-sqlite3` on a very
-current Node release), the whole "database" is one file you can open, back
-up, or delete, and it's part of Node itself rather than a third-party
-dependency. It's still labeled experimental upstream, which is the one thing
-to watch — if that ever becomes a real problem, `src/db.ts` is the only file
-that would need to change to move to Postgres or MySQL; every service talks
-to `db.prepare(...)` through that one module, not to SQLite specifics
-scattered around.
+Three tables, defined in `prisma/schema.prisma`: `users`, `daily_completions`
+(one row per person per day played), `streaks` (current + longest per person).
+Every service goes through `src/db.ts`'s one shared Prisma client — nothing
+talks to Postgres directly, so the schema is the one source of truth for what
+the data looks like.
 
-## Data
+### Changing the schema
 
-Everything lives in one file at `DATABASE_PATH` (default `./data/zeke.db`),
-created automatically on first run. Three tables: `users`, `daily_completions`
-(one row per person per day played), `streaks` (current/longest per person).
-Delete the file to reset everything — it's gitignored, so this never touches
-version control.
+Edit `prisma/schema.prisma`, then:
+
+```bash
+npm run db:migrate     # prompts for a migration name, applies it locally
+```
+
+That writes a new folder under `prisma/migrations/` — **commit it**, migration
+history is meant to be checked in, unlike `.env` or the generated client.
+`npm run db:deploy` applies pending migrations without prompting, which is
+what a CI/production deploy should run instead of `db:migrate`.
+
+### Inspecting the data
+
+```bash
+npm run db:studio
+```
+
+Opens Prisma Studio — a browser UI for browsing and editing rows directly.
+Good for "did that streak actually update" during development.
+
+### Resetting everything
+
+```bash
+npx prisma migrate reset
+```
+
+Drops and recreates the database from the migrations. Local dev only —
+this is destructive.

@@ -1,0 +1,61 @@
+// Zeke Mobile server — Postgres via Prisma.
+//
+// Three models, matching exactly what the services need: accounts, one row
+// per person per day they've played the Daily Challenge, and one streak
+// counter per person. Field names are camelCase (Prisma convention); `@map`
+// keeps the actual Postgres columns snake_case.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  /// null for a Google-only account — see users.service.ts.
+  passwordHash String?  @map("password_hash")
+  /// null for a local-only account. Unique so `findUnique({ where: { googleId } })` works.
+  googleId     String?  @unique @map("google_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  completions DailyCompletion[]
+  streak      Streak?
+
+  @@map("users")
+}
+
+/// One row per person per day they've played the Daily Challenge. The
+/// (userId, date) primary key is what makes "one shot per day" enforceable
+/// server-side — see daily.service.ts.
+model DailyCompletion {
+  userId   String @map("user_id")
+  /// UTC calendar day, "YYYY-MM-DD" — see src/data/dailyWords.ts's dayKey().
+  date     String
+  won      Boolean
+  mistakes Int
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@id([userId, date])
+  @@map("daily_completions")
+}
+
+/// One row per person, tracking their Daily Challenge streak.
+model Streak {
+  userId  String @id @map("user_id")
+  current Int    @default(0)
+  longest Int    @default(0)
+  /// The date of the last WIN counted toward the streak — deliberately not
+  /// touched by a loss. See the reasoning in daily.service.ts's complete().
+  lastCompletedDate String? @map("last_completed_date")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("streaks")
+}

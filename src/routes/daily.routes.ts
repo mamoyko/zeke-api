@@ -18,7 +18,7 @@ dailyRoutes.get(
 dailyRoutes.get(
   "/status",
   asyncHandler(async (req, res) => {
-    res.json(getStatus((req as AuthedRequest).userId));
+    res.json(await getStatus((req as AuthedRequest).userId));
   }),
 );
 
@@ -34,6 +34,6 @@ dailyRoutes.post(
     if (!parsed.success) throw badRequest("Missing or invalid result.");
 
     const { won, mistakes } = parsed.data;
-    res.json(complete((req as AuthedRequest).userId, won, mistakes));
+    res.json(await complete((req as AuthedRequest).userId, won, mistakes));
   }),
 );
