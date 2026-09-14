@@ -1,30 +1,46 @@
+// src/app.ts
+import express from "express";
 import cors from "cors";
-import express, { type NextFunction, type Request, type Response } from "express";
-import { authRoutes } from "./routes/auth.routes";
-import { dailyRoutes } from "./routes/daily.routes";
-import { HttpError } from "./errors";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import router from "./routes";
+import { isDev } from "./config";
+import { connectToPrisma } from "./utils/prisma";
 
-export const app = express();
+const app = express();
 
-app.use(cors());
+app.set("trust proxy", 1);
+
+app.use(
+  cors({
+    origin: "*",
+    credentials: true,
+  }),
+);
+
 app.use(express.json());
 
-app.get("/health", (_req, res) => res.json({ ok: true }));
+// Rate limiting — skipped in dev so it never gets in the way while testing.
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+});
+if (!isDev) app.use(limiter);
 
-app.use("/auth", authRoutes);
-app.use("/daily", dailyRoutes);
+app.use(helmet());
+app.disable("x-powered-by");
+
+app.use(router);
 
 app.use((_req, res) => {
   res.status(404).json({ error: "Not found." });
 });
 
-// Express 4 routes async errors here via asyncHandler (see errors.ts) rather
-// than natively, so this is the one place a failure actually lands.
-app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
-  if (err instanceof HttpError) {
-    res.status(err.status).json({ error: err.message });
-    return;
-  }
-  console.error(err);
-  res.status(500).json({ error: "Something went wrong on the server." });
+// Postgres via Prisma. Doesn't block startup — if this fails, requests that
+// touch the database will error individually (and log), rather than the
+// whole process refusing to boot.
+connectToPrisma().catch((err) => {
+  console.error("[app] Could not connect to Postgres:", err);
 });
+
+export default app;

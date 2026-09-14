@@ -1,22 +1,20 @@
-import "dotenv/config";
+import * as dotenv from "dotenv";
+dotenv.config();
 
-/**
- * All environment configuration in one typed place. Falls back to
- * zero-config dev defaults so `npm run dev` works right after
- * `docker compose up -d && npm install` with no `.env` file at all —
- * Google Sign-In is the one thing that needs real values (see
- * ../zeke-mobile/auth/README.md).
- */
-export const config = {
-  port: Number(process.env.PORT ?? 4000),
-  jwtSecret: process.env.JWT_SECRET ?? "zeke-mobile-dev-secret-change-me",
-  databaseUrl:
-    process.env.DATABASE_URL ?? "postgresql://zeke:zeke@localhost:5433/zeke?schema=public",
-  google: {
-    clientId: process.env.GOOGLE_CLIENT_ID ?? "",
-    clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
-  },
-};
+export const PORT = Number(process.env.PORT || 4000);
+export const isDev = process.env.NODE_ENV !== "production";
 
-export const googleConfigured = (): boolean =>
-  config.google.clientId !== "" && config.google.clientSecret !== "";
+export const JWT_SECRET = (process.env.JWT_SECRET ||
+  "zeke-mobile-dev-secret-change-me") as string;
+
+export const DATABASE_URL = (process.env.DATABASE_URL ||
+  "postgresql://zeke:zeke@localhost:5433/zeke?schema=public") as string;
+
+// Only needed for the "Continue with Google" button — see
+// ../zeke-mobile/auth/README.md. The Godot client only ever sees
+// GOOGLE_CLIENT_ID (client IDs are meant to be public); GOOGLE_CLIENT_SECRET
+// stays here on the server and is never shipped inside the game.
+export const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID as string;
+export const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET as string;
+
+export const googleConfigured = (): boolean => !!GOOGLE_CLIENT_ID && !!GOOGLE_CLIENT_SECRET;

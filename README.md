@@ -24,7 +24,7 @@ Postgres instead, see below).
 docker compose up -d          # starts Postgres on localhost:5433
 npm install                   # also generates the Prisma client (postinstall)
 cp .env.example .env          # defaults match docker-compose.yml exactly
-npm run db:migrate            # creates the tables
+npm run prisma:migrate        # creates the tables
 npm run dev
 ```
 
@@ -32,14 +32,14 @@ That starts it on `http://localhost:4000` with auto-reload on save.
 
 **No Docker?** Point `DATABASE_URL` in `.env` at any Postgres instead — a free
 one from [Neon](https://neon.tech) or [Supabase](https://supabase.com) takes
-about a minute to create — then run `npm run db:migrate`. Nothing else changes.
+about a minute to create — then run `npm run prisma:migrate`. Nothing else changes.
 
 For a longer-running deployment:
 
 ```bash
-npm run build       # compiles src/ -> dist/
-npm run db:deploy   # applies migrations without prompting (CI/production)
-npm start            # runs the compiled output
+npm run build           # compiles -> dist/src/
+npm run prisma:deploy   # applies migrations without prompting (CI/production)
+npm start                # runs the compiled output
 ```
 
 Point the game at this server by setting `base_url` in the game repo's
@@ -51,22 +51,59 @@ purpose — 5432 is the Postgres default, and a dev machine already running
 another Postgres-backed project (very likely) would collide on it. Change the
 port mapping and `DATABASE_URL` together if you'd rather use 5432.
 
-## What's here
+## Project structure
 
-| Path                              | What it does                                    |
-| ---------------------------------- | ------------------------------------------------ |
-| `src/index.ts`                    | Starts the HTTP server                          |
-| `src/app.ts`                      | Express app: middleware, routes, error handling |
-| `src/config.ts`                   | Reads `.env`; safe zero-config defaults          |
-| `prisma/schema.prisma`            | The three database models — see below           |
-| `src/db.ts`                       | The shared Prisma client                        |
-| `src/routes/auth.routes.ts`       | Signup, login, Google exchange, `/auth/me`      |
-| `src/routes/daily.routes.ts`      | Today's word, streak status, recording a result |
-| `src/services/users.service.ts`   | Password hashing, account lookups               |
-| `src/services/token.service.ts`   | Signs/verifies session tokens (JWT)             |
-| `src/services/google.service.ts`  | The actual Google OAuth token exchange          |
-| `src/services/daily.service.ts`   | Word-of-the-day selection + streak math         |
-| `src/data/dailyWords.ts`          | The word pool the daily challenge draws from    |
+Layered the same way as this project's own `api-template`: a request flows
+**route → controller → service → repository**, each layer only calling the
+one below it.
+
+- **`routes/`** map an HTTP verb + path to a controller method. No logic here
+  beyond which middleware guards a route (`requireAuth`) — see
+  `routes/index.ts` for how the two feature routers get mounted.
+- **`controllers/`** read the request, validate the body (via `zod`), call a
+  service, and shape the HTTP response — including turning a thrown
+  `HttpError` into the right status code (`utils/errors.ts`'s
+  `describeError`). No business logic and no direct database access here.
+- **`services/`** hold the actual business logic — password hashing, the
+  Google OAuth exchange, the streak math — and call into repositories for
+  anything that touches the database. This is where you'd look to understand
+  *what the app does*, independent of HTTP or SQL.
+- **`repositories/`** are the only files that import `utils/prisma`. Each
+  method is a thin, named Prisma call (`findByEmail`, `saveStreak`, ...) — if
+  the database ever changed, this is the one layer that would need to.
+- **`models/`** are the shared type definitions (`TUser`, `TDailyStatus`, ...)
+  every other layer imports, plus small pure mappers like `toPublicUser`.
+- **`utils/`** are cross-cutting helpers with no feature of their own:
+  the Prisma client, JWT signing/verification, the `HttpError` type.
+- **`data/`** is static content the app ships with — currently just the daily
+  word pool.
+- **`types/.d.ts`** augments Express's own `Request` type with `userId`
+  (set by `requireAuth`), so controllers read `req.userId` directly instead
+  of casting the request on every use.
+
+| Path                                    | What it does                                       |
+| ---------------------------------------- | --------------------------------------------------- |
+| `src/server.ts`                         | Starts the HTTP server                             |
+| `src/app.ts`                            | Express app: middleware, routes, DB connection     |
+| `src/config.ts`                         | Reads `.env`; safe zero-config defaults            |
+| `prisma/schema.prisma`                  | The three database models — see below             |
+| `src/utils/prisma.ts`                   | The shared Prisma client                           |
+| `src/utils/token.ts`                    | Signs/verifies session tokens (JWT)                |
+| `src/utils/errors.ts`                   | `HttpError` + `describeError` — used by every controller |
+| `src/middleware/require-auth.middleware.ts` | Checks `Authorization: Bearer <token>`         |
+| `src/routes/index.ts`                   | Mounts `/auth` and `/daily`, plus `/health`        |
+| `src/routes/auth.route.ts`              | Signup, login, Google exchange, `/auth/me`         |
+| `src/routes/daily.route.ts`             | Today's word, streak status, recording a result    |
+| `src/controllers/auth.controller.ts`    | Validates auth requests, shapes responses          |
+| `src/controllers/daily.controller.ts`   | Validates daily-challenge requests, shapes responses |
+| `src/services/auth.service.ts`          | Signup/login/Google-linking business logic         |
+| `src/services/google-auth.service.ts`   | The actual Google OAuth token exchange             |
+| `src/services/daily.service.ts`         | Word-of-the-day selection + streak math            |
+| `src/repositories/user.repository.ts`   | Every Prisma call touching `users`                 |
+| `src/repositories/daily.repository.ts`  | Every Prisma call touching completions/streaks     |
+| `src/models/user.model.ts`              | `TUser`, `TPublicUser`, `toPublicUser`             |
+| `src/models/daily.model.ts`             | `TDailyStatus`, `TStreak`                          |
+| `src/data/daily-words.ts`               | The word pool the daily challenge draws from       |
 
 ## API
 
@@ -137,7 +174,7 @@ work regardless.
 
 Three tables, defined in `prisma/schema.prisma`: `users`, `daily_completions`
 (one row per person per day played), `streaks` (current + longest per person).
-Every service goes through `src/db.ts`'s one shared Prisma client — nothing
+Every repository goes through `src/utils/prisma.ts`'s one shared Prisma client — nothing
 talks to Postgres directly, so the schema is the one source of truth for what
 the data looks like.
 
@@ -146,18 +183,18 @@ the data looks like.
 Edit `prisma/schema.prisma`, then:
 
 ```bash
-npm run db:migrate     # prompts for a migration name, applies it locally
+npm run prisma:migrate     # prompts for a migration name, applies it locally
 ```
 
 That writes a new folder under `prisma/migrations/` — **commit it**, migration
 history is meant to be checked in, unlike `.env` or the generated client.
-`npm run db:deploy` applies pending migrations without prompting, which is
-what a CI/production deploy should run instead of `db:migrate`.
+`npm run prisma:deploy` applies pending migrations without prompting, which
+is what a CI/production deploy should run instead of `prisma:migrate`.
 
 ### Inspecting the data
 
 ```bash
-npm run db:studio
+npm run prisma:studio
 ```
 
 Opens Prisma Studio — a browser UI for browsing and editing rows directly.
