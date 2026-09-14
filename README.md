@@ -16,6 +16,10 @@ shouldn't hold:
   reason a real-money escrow needs a bank: two people's balances have to
   change atomically and neither side can be trusted to self-report the
   result.
+- **Push notifications** — the moment someone receives a bounty, a real
+  Firebase Cloud Messaging push can reach their phone even if it's asleep,
+  which is inherently a server's job: nothing on the *recipient's* idle
+  device can know that a *different* device just told this server something.
 
 Node.js + Express + TypeScript, with **Postgres via Prisma** for storage.
 
@@ -87,7 +91,7 @@ one below it.
 
 - **`routes/`** map an HTTP verb + path to a controller method. No logic here
   beyond which middleware guards a route (`requireAuth`) — see
-  `routes/index.ts` for how the three feature routers get mounted.
+  `routes/index.ts` for how the four feature routers get mounted.
 - **`controllers/`** read the request, validate the body (via `zod`), call a
   service, and shape the HTTP response — including turning a thrown
   `HttpError` into the right status code (`utils/errors.ts`'s
@@ -114,14 +118,19 @@ one below it.
 | `src/server.ts`                         | Starts the HTTP server                             |
 | `src/app.ts`                            | Express app: middleware, routes, DB connection     |
 | `src/config.ts`                         | Reads `.env`; safe zero-config defaults            |
-| `prisma/schema.prisma`                  | The four database models — see below              |
+| `prisma/schema.prisma`                  | The five database models — see below              |
 | `prisma/seed.ts`                        | Test accounts — see "Test accounts" above          |
 | `src/utils/prisma.ts`                   | The shared Prisma client                           |
 | `src/utils/token.ts`                    | Signs/verifies session tokens (JWT)                |
 | `src/utils/errors.ts`                   | `HttpError` + `describeError` — used by every controller |
 | `src/utils/mailer.ts`                   | Sends one email via Resend — see "Email notifications" below |
+| `src/utils/push.ts`                     | Sends one push via Firebase — see "Push notifications" below |
 | `src/middleware/require-auth.middleware.ts` | Checks `Authorization: Bearer <token>`         |
-| `src/routes/index.ts`                   | Mounts `/auth`, `/daily`, `/bounties`, plus `/health` |
+| `src/routes/index.ts`                   | Mounts `/auth`, `/daily`, `/bounties`, `/notifications`, plus `/health` |
+| `src/routes/notification.route.ts`      | Register/unregister a device for push               |
+| `src/controllers/notification.controller.ts` | Validates device-token requests                 |
+| `src/services/push.service.ts`          | Looks up a user's devices, sends, prunes dead tokens |
+| `src/repositories/device-token.repository.ts` | Every Prisma call touching `device_tokens`     |
 | `src/routes/auth.route.ts`              | Signup, login, Google exchange, `/auth/me`         |
 | `src/routes/daily.route.ts`             | Today's word, streak status, recording a result    |
 | `src/controllers/auth.controller.ts`    | Validates auth requests, shapes responses          |
@@ -162,6 +171,8 @@ the token you get back from signup/login/Google.
 | GET    | `/bounties/sent`         |   ✓   | —                                      | `{bounties: [...]}`, with each one's status          |
 | GET    | `/bounties/:id/play`     |   ✓   | —                                      | `{id, word, category, wager, reward}` — only for the actual recipient |
 | POST   | `/bounties/:id/complete` |   ✓   | `{won, mistakes}`                    | `{status, wager, reward}`                           |
+| POST   | `/notifications/device-token` |   ✓   | `{token, platform}`            | `{ok: true}`                                        |
+| DELETE | `/notifications/device-token` |   ✓   | `{token}`                       | `{ok: true}`                                        |
 
 `user` is always `{id, name, email, provider}` — `provider` is `"local"` or
 `"google"`, `password` and Google tokens never appear in a response.
@@ -265,12 +276,67 @@ email` and moves on. Sending the email is fire-and-forget from
 shows up in the server's logs, never as a failed `POST /bounties` for a
 bounty that was already created and paid for.
 
+## Push notifications
+
+The real thing — a notification that reaches the recipient's phone the
+instant a bounty is sent, even if their phone is asleep and the app hasn't
+been opened in days. Not to be confused with the game's local reminder
+scheduler (`notifications/README.md` in the game repo) — that one can only
+fire things the device itself scheduled in advance, which can't react to an
+event on the server. This is the piece that actually can, via
+[Firebase Cloud Messaging](https://firebase.google.com/docs/cloud-messaging).
+
+### Setup
+
+1. Create a project at [console.firebase.google.com](https://console.firebase.google.com/)
+   (free).
+2. **Project Settings → Service Accounts → Generate new private key.**
+   Downloads a JSON file.
+3. Put that file somewhere in this repo (never committed — see `.gitignore`)
+   and point `.env` at it:
+   ```
+   FIREBASE_SERVICE_ACCOUNT_PATH=./firebase-service-account.json
+   ```
+4. On the game side, `godot-x/firebase`'s Messaging module needs installing
+   and an export needs building — see the game repo's own
+   `notifications/README.md`, since that half is native Android/iOS code and
+   can't run on the desktop build this project has actually been able to
+   verify.
+
+Without step 3, bounty creation works exactly the same —
+`utils/push.ts` logs `[push] Firebase not configured — skipping push to N
+device(s)` and moves on, the same graceful-degradation shape as email and
+Google Sign-In.
+
+### How it works
+
+- **`device_tokens`** is a separate table, not a column on `users` — a
+  person can have more than one device (phone + tablet), and a token that
+  moves to a different account (a shared device, a re-login) re-points its
+  existing row (`token` is unique) rather than creating a duplicate.
+- **`POST /notifications/device-token`** / **`DELETE /notifications/device-token`**
+  register and unregister one device. The game calls these on sign-in and
+  sign-out respectively.
+- **Dead tokens get pruned automatically.** FCM reports, per-token, whether
+  a send failed because the app was uninstalled or the token otherwise
+  expired (`messaging/registration-token-not-registered`,
+  `messaging/invalid-registration-token` — checked against the actual codes
+  in the installed `firebase-admin` package, not guessed). Those specific
+  failures delete the row; any other kind of failure (a bad server
+  credential, a transient FCM outage) just logs and leaves the token alone,
+  since the token itself might be perfectly fine.
+- **Fire-and-forget from `BountySvc.create()`**, sent alongside the email in
+  parallel (`Promise.all`) — same reasoning as email: a push failure must
+  never turn into a failed `POST /bounties` for a bounty that already
+  succeeded.
+
 ## The database
 
-Four tables, defined in `prisma/schema.prisma`: `users` (now including a
+Five tables, defined in `prisma/schema.prisma`: `users` (now including a
 `balance`), `daily_completions` (one row per person per day played),
 `streaks` (current + longest per person), `bounties` (one row per Word
-Bounty, sender/recipient/word/wager/reward/status). Every repository goes
+Bounty, sender/recipient/word/wager/reward/status), `device_tokens` (one row
+per registered device, many-to-one on `users`). Every repository goes
 through `src/utils/prisma.ts`'s one shared Prisma client — nothing talks to
 Postgres directly, so the schema is the one source of truth for what the
 data looks like.

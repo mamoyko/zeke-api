@@ -3,6 +3,7 @@ import UserRepo from "../repositories/user.repository";
 import { randomWordOptions, ANIME_WORDS, type TAnimeWord } from "../data/anime-words";
 import { badRequest, notFound, unauthorized } from "../utils/errors";
 import { sendEmail } from "../utils/mailer";
+import PushSvc from "./push.service";
 import type { TIncomingBounty, TSentBounty } from "../models/bounty.model";
 
 const WORD_OPTIONS_COUNT = 5;
@@ -50,11 +51,18 @@ export default class BountySvc {
       reward: wager * REWARD_MULTIPLIER,
     });
 
-    // Best-effort — see sendEmail()'s own doc comment for why a mail hiccup
-    // here must never turn into a failure response for a bounty that has
-    // already been created and paid for.
+    // Best-effort — see sendEmail()'s / sendPush()'s own doc comments for why
+    // a mail or push hiccup here must never turn into a failure response for
+    // a bounty that has already been created and paid for.
     const sender = await UserRepo.findById(senderId);
-    void this.notifyRecipient(sender?.name ?? "Someone", recipient.email, bounty.wager, bounty.reward);
+    void this.notifyRecipient(
+      sender?.name ?? "Someone",
+      recipient.id,
+      recipient.email,
+      bounty.id,
+      bounty.wager,
+      bounty.reward,
+    );
 
     return {
       id: bounty.id,
@@ -68,25 +76,36 @@ export default class BountySvc {
     };
   }
 
-  /** Lets a recipient know a bounty is waiting for them — the only way they'd
-   * otherwise find out is by opening the app and checking BOUNTY themselves.
-   * Never awaited by a caller that needs its result; see sendEmail(). */
+  /** Lets a recipient know a bounty is waiting for them, two ways at once —
+   * email always attempted, push only reaching whatever devices they've
+   * registered (see PushSvc). Neither is awaited by a caller that needs its
+   * result; see sendEmail()'s and sendPush()'s own doc comments for why. */
   private static async notifyRecipient(
     senderName: string,
+    recipientId: string,
     recipientEmail: string,
+    bountyId: string,
     wager: number,
     reward: number,
   ): Promise<void> {
-    await sendEmail(
-      recipientEmail,
-      `${senderName} sent you a Word Bounty`,
-      `<p><strong>${senderName}</strong> just sent you a Word Bounty on Zeke Mobile.</p>
-       <p>They staked <strong>${wager} coins</strong> that you can't solve it.
-       Beat it and you take their stake. Fail, and they walk away with
-       <strong>${reward} coins</strong>.</p>
-       <p>Open the app and check the BOUNTY tab to see it.</p>
-       <p style="color:#7E8770;font-size:12px">— Zeke, probably smug about this</p>`,
-    );
+    await Promise.all([
+      sendEmail(
+        recipientEmail,
+        `${senderName} sent you a Word Bounty`,
+        `<p><strong>${senderName}</strong> just sent you a Word Bounty on Zeke Mobile.</p>
+         <p>They staked <strong>${wager} coins</strong> that you can't solve it.
+         Beat it and you take their stake. Fail, and they walk away with
+         <strong>${reward} coins</strong>.</p>
+         <p>Open the app and check the BOUNTY tab to see it.</p>
+         <p style="color:#7E8770;font-size:12px">— Zeke, probably smug about this</p>`,
+      ),
+      PushSvc.notifyUser(
+        recipientId,
+        "New Word Bounty!",
+        `${senderName} bet ${wager} coins you can't solve their word.`,
+        { type: "bounty", bountyId },
+      ),
+    ]);
   }
 
   static async listIncoming(userId: string): Promise<TIncomingBounty[]> {

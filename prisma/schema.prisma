@@ -32,8 +32,28 @@ model User {
   streak          Streak?
   sentBounties    Bounty[]          @relation("BountySender")
   receivedBounties Bounty[]         @relation("BountyRecipient")
+  deviceTokens    DeviceToken[]
 
   @@map("users")
+}
+
+/// One row per device that's registered for push notifications. A person can
+/// have more than one (phone + tablet), so this is many-to-one on User, not
+/// a column on it. `token` is unique on its own — if the same physical
+/// device token shows up registered to a different user (a phone shared
+/// between accounts, or a re-login), registerToken() in
+/// push.service.ts re-points it rather than creating a duplicate row.
+model DeviceToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  token     String   @unique
+  /// "android" | "ios" — informational; FCM sends work the same either way.
+  platform  String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("device_tokens")
 }
 
 /// One row per person per day they've played the Daily Challenge. The

@@ -26,3 +26,10 @@ export const RESEND_API_KEY = process.env.RESEND_API_KEY as string;
 export const MAIL_FROM = (process.env.MAIL_FROM || "Zeke Mobile <onboarding@resend.dev>") as string;
 
 export const mailConfigured = (): boolean => !!RESEND_API_KEY;
+
+// Only needed to send a real push notification (via Firebase Cloud
+// Messaging) the instant someone receives a Word Bounty — see utils/push.ts.
+// Without it, bounties still work exactly the same. Points at a Firebase
+// service account JSON file, downloaded from your own Firebase project's
+// console — never commit that file (see .gitignore).
+export const FIREBASE_SERVICE_ACCOUNT_PATH = process.env.FIREBASE_SERVICE_ACCOUNT_PATH as string;
