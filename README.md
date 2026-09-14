@@ -11,6 +11,11 @@ shouldn't hold:
 - **The Daily Challenge** — a universal "word of the day" and each player's
   streak. This has to live on a server almost by definition: everyone needs
   the *same* word, and a streak has to survive the app being reinstalled.
+- **Word Bounties** — an in-game currency balance and an asynchronous
+  "send a friend a hard word" challenge, which needs a server for the same
+  reason a real-money escrow needs a bank: two people's balances have to
+  change atomically and neither side can be trusted to self-report the
+  result.
 
 Node.js + Express + TypeScript, with **Postgres via Prisma** for storage.
 
@@ -59,7 +64,7 @@ one below it.
 
 - **`routes/`** map an HTTP verb + path to a controller method. No logic here
   beyond which middleware guards a route (`requireAuth`) — see
-  `routes/index.ts` for how the two feature routers get mounted.
+  `routes/index.ts` for how the three feature routers get mounted.
 - **`controllers/`** read the request, validate the body (via `zod`), call a
   service, and shape the HTTP response — including turning a thrown
   `HttpError` into the right status code (`utils/errors.ts`'s
@@ -75,8 +80,8 @@ one below it.
   every other layer imports, plus small pure mappers like `toPublicUser`.
 - **`utils/`** are cross-cutting helpers with no feature of their own:
   the Prisma client, JWT signing/verification, the `HttpError` type.
-- **`data/`** is static content the app ships with — currently just the daily
-  word pool.
+- **`data/`** is static content the app ships with — the daily word pool and
+  the Anime word pool Word Bounties draws from.
 - **`types/.d.ts`** augments Express's own `Request` type with `userId`
   (set by `requireAuth`), so controllers read `req.userId` directly instead
   of casting the request on every use.
@@ -86,12 +91,12 @@ one below it.
 | `src/server.ts`                         | Starts the HTTP server                             |
 | `src/app.ts`                            | Express app: middleware, routes, DB connection     |
 | `src/config.ts`                         | Reads `.env`; safe zero-config defaults            |
-| `prisma/schema.prisma`                  | The three database models — see below             |
+| `prisma/schema.prisma`                  | The four database models — see below              |
 | `src/utils/prisma.ts`                   | The shared Prisma client                           |
 | `src/utils/token.ts`                    | Signs/verifies session tokens (JWT)                |
 | `src/utils/errors.ts`                   | `HttpError` + `describeError` — used by every controller |
 | `src/middleware/require-auth.middleware.ts` | Checks `Authorization: Bearer <token>`         |
-| `src/routes/index.ts`                   | Mounts `/auth` and `/daily`, plus `/health`        |
+| `src/routes/index.ts`                   | Mounts `/auth`, `/daily`, `/bounties`, plus `/health` |
 | `src/routes/auth.route.ts`              | Signup, login, Google exchange, `/auth/me`         |
 | `src/routes/daily.route.ts`             | Today's word, streak status, recording a result    |
 | `src/controllers/auth.controller.ts`    | Validates auth requests, shapes responses          |
@@ -99,26 +104,39 @@ one below it.
 | `src/services/auth.service.ts`          | Signup/login/Google-linking business logic         |
 | `src/services/google-auth.service.ts`   | The actual Google OAuth token exchange             |
 | `src/services/daily.service.ts`         | Word-of-the-day selection + streak math            |
-| `src/repositories/user.repository.ts`   | Every Prisma call touching `users`                 |
+| `src/services/bounty.service.ts`        | Wager math, word-option draws, resolving a bounty  |
+| `src/repositories/user.repository.ts`   | Every Prisma call touching `users` (incl. balance) |
 | `src/repositories/daily.repository.ts`  | Every Prisma call touching completions/streaks     |
+| `src/repositories/bounty.repository.ts` | Every Prisma call touching `bounties`              |
 | `src/models/user.model.ts`              | `TUser`, `TPublicUser`, `toPublicUser`             |
 | `src/models/daily.model.ts`             | `TDailyStatus`, `TStreak`                          |
+| `src/models/bounty.model.ts`            | `TBounty`, `TIncomingBounty`, `TSentBounty`        |
 | `src/data/daily-words.ts`               | The word pool the daily challenge draws from       |
+| `src/data/anime-words.ts`               | The word pool Word Bounties draws from             |
+| `src/routes/bounty.route.ts`            | Wallet, word options, send, incoming/sent, play/complete |
+| `src/controllers/bounty.controller.ts`  | Validates bounty requests, shapes responses        |
 
 ## API
 
 Every response is JSON. Authenticated routes take `Authorization: Bearer <token>`,
 the token you get back from signup/login/Google.
 
-| Method | Path             | Auth? | Body                          | Returns                                              |
-| ------ | ---------------- | :---: | ------------------------------ | ----------------------------------------------------- |
-| POST   | `/auth/signup`   |   –   | `{name, email, password}`     | `{token, user}`                                       |
-| POST   | `/auth/login`    |   –   | `{email, password}`           | `{token, user}`                                       |
-| POST   | `/auth/google`   |   –   | `{code, codeVerifier, redirectUri}` | `{token, user}`                                 |
-| GET    | `/auth/me`       |   ✓   | —                               | `{user}`                                              |
-| GET    | `/daily/today`   |   ✓   | —                               | `{date, word, category}`                              |
-| GET    | `/daily/status`  |   ✓   | —                               | `{date, playedToday, won, streak, longest}`           |
-| POST   | `/daily/complete`|   ✓   | `{won, mistakes}`             | Same shape as `/daily/status`, after recording it      |
+| Method | Path                     | Auth? | Body                                 | Returns                                            |
+| ------ | ------------------------ | :---: | ------------------------------------- | --------------------------------------------------- |
+| POST   | `/auth/signup`           |   –   | `{name, email, password}`            | `{token, user}`                                     |
+| POST   | `/auth/login`            |   –   | `{email, password}`                  | `{token, user}`                                     |
+| POST   | `/auth/google`           |   –   | `{code, codeVerifier, redirectUri}`  | `{token, user}`                                     |
+| GET    | `/auth/me`               |   ✓   | —                                      | `{user}`                                            |
+| GET    | `/daily/today`           |   ✓   | —                                      | `{date, word, category}`                            |
+| GET    | `/daily/status`          |   ✓   | —                                      | `{date, playedToday, won, streak, longest}`         |
+| POST   | `/daily/complete`        |   ✓   | `{won, mistakes}`                    | Same shape as `/daily/status`, after recording it   |
+| GET    | `/bounties/word-options` |   ✓   | —                                      | `{words: [{word, category}, ...]}`                  |
+| GET    | `/bounties/wallet`       |   ✓   | —                                      | `{balance}`                                         |
+| POST   | `/bounties`              |   ✓   | `{recipientEmail, word, wager}`      | The new bounty, sender-shaped (no word revealed back — you already know it) |
+| GET    | `/bounties/incoming`     |   ✓   | —                                      | `{bounties: [...]}`, word withheld until played     |
+| GET    | `/bounties/sent`         |   ✓   | —                                      | `{bounties: [...]}`, with each one's status          |
+| GET    | `/bounties/:id/play`     |   ✓   | —                                      | `{id, word, category, wager, reward}` — only for the actual recipient |
+| POST   | `/bounties/:id/complete` |   ✓   | `{won, mistakes}`                    | `{status, wager, reward}`                           |
 
 `user` is always `{id, name, email, provider}` — `provider` is `"local"` or
 `"google"`, `password` and Google tokens never appear in a response.
@@ -148,6 +166,21 @@ the token you get back from signup/login/Google.
 - **Google account linking.** If someone signs up locally with
   `jo@example.com` and later taps "Continue with Google" using that same
   address, they land back on the *same* account rather than a duplicate.
+- **Word Bounties are an escrow, not a bet placed on the honor system.** The
+  wager is debited from the sender the moment a bounty is created
+  (`UserRepo.adjustBalance`, an atomic conditional decrement — see the
+  `count` check in `bounty.service.ts`'s `create()` — so two simultaneous
+  sends can't both succeed off an already-spent balance). The payout only
+  happens once, gated by the same idempotency pattern as the Daily
+  Challenge: `bounty.repository.ts`'s `resolve()` only flips a bounty from
+  `"pending"` the first time, and a second `/complete` call for the same
+  bounty just reports back whatever already happened.
+- **A bounty's word is withheld from its own sender's view of it** — the
+  `/bounties/sent` list shows status and stakes, never the word, since the
+  sender picked it and already knows it; withholding it from the *recipient*
+  until `/bounties/:id/play` is the one that actually matters, and is
+  checked by ownership (`bounty.recipientId !== userId`), not just by which
+  endpoint was called.
 
 ## Setting up Google Sign-In
 
@@ -172,11 +205,13 @@ work regardless.
 
 ## The database
 
-Three tables, defined in `prisma/schema.prisma`: `users`, `daily_completions`
-(one row per person per day played), `streaks` (current + longest per person).
-Every repository goes through `src/utils/prisma.ts`'s one shared Prisma client — nothing
-talks to Postgres directly, so the schema is the one source of truth for what
-the data looks like.
+Four tables, defined in `prisma/schema.prisma`: `users` (now including a
+`balance`), `daily_completions` (one row per person per day played),
+`streaks` (current + longest per person), `bounties` (one row per Word
+Bounty, sender/recipient/word/wager/reward/status). Every repository goes
+through `src/utils/prisma.ts`'s one shared Prisma client — nothing talks to
+Postgres directly, so the schema is the one source of truth for what the
+data looks like.
 
 ### Changing the schema
 

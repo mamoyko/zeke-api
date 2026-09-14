@@ -24,8 +24,14 @@ model User {
   googleId     String?  @unique @map("google_id")
   createdAt    DateTime @default(now()) @map("created_at")
 
-  completions DailyCompletion[]
-  streak      Streak?
+  /// In-game currency. Starts non-zero so a fresh account can send a Word
+  /// Bounty immediately — see bounty.service.ts's SIGNUP_BONUS.
+  balance Int @default(100)
+
+  completions     DailyCompletion[]
+  streak          Streak?
+  sentBounties    Bounty[]          @relation("BountySender")
+  receivedBounties Bounty[]         @relation("BountyRecipient")
 
   @@map("users")
 }
@@ -58,4 +64,32 @@ model Streak {
   user User @relation(fields: [userId], references: [id])
 
   @@map("streaks")
+}
+
+/// An asynchronous "send a hard word to a friend" challenge. The sender picks
+/// a word from the Anime pool (src/data/anime-words.ts) and a wager; the
+/// wager is deducted immediately. If the recipient fails, the sender gets
+/// double the wager back. If the recipient solves it, the recipient takes
+/// the sender's stake instead. See bounty.service.ts for the exact math.
+model Bounty {
+  id          String    @id @default(uuid())
+  senderId    String    @map("sender_id")
+  recipientId String    @map("recipient_id")
+  word        String
+  category    String
+  wager       Int
+  /// Paid to the sender if the recipient fails. Always `wager * 2` today,
+  /// but stored (not recomputed) so a future balance formula change can't
+  /// alter the payout of a bounty that's already in flight.
+  reward      Int
+  /// "pending" | "won" (recipient solved it) | "lost" (recipient failed)
+  status      String    @default("pending")
+  mistakes    Int?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  resolvedAt  DateTime? @map("resolved_at")
+
+  sender    User @relation("BountySender", fields: [senderId], references: [id])
+  recipient User @relation("BountyRecipient", fields: [recipientId], references: [id])
+
+  @@map("bounties")
 }

@@ -29,4 +29,17 @@ export default class UserRepo {
   static attachGoogleId(id: string, googleId: string): Promise<TUser> {
     return prisma.user.update({ where: { id }, data: { googleId } });
   }
+
+  /** Positive `delta` credits, negative debits. Never lets balance go
+   * negative — the caller (bounty.service.ts) checks affordability first,
+   * but this is the actual backstop against a race between two requests. */
+  static adjustBalance(id: string, delta: number) {
+    if (delta >= 0) {
+      return prisma.user.update({ where: { id }, data: { balance: { increment: delta } } });
+    }
+    return prisma.user.updateMany({
+      where: { id, balance: { gte: -delta } },
+      data: { balance: { increment: delta } },
+    });
+  }
 }
