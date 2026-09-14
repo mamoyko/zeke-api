@@ -119,6 +119,7 @@ one below it.
 | `src/utils/prisma.ts`                   | The shared Prisma client                           |
 | `src/utils/token.ts`                    | Signs/verifies session tokens (JWT)                |
 | `src/utils/errors.ts`                   | `HttpError` + `describeError` — used by every controller |
+| `src/utils/mailer.ts`                   | Sends one email via Resend — see "Email notifications" below |
 | `src/middleware/require-auth.middleware.ts` | Checks `Authorization: Bearer <token>`         |
 | `src/routes/index.ts`                   | Mounts `/auth`, `/daily`, `/bounties`, plus `/health` |
 | `src/routes/auth.route.ts`              | Signup, login, Google exchange, `/auth/me`         |
@@ -226,6 +227,43 @@ Without these, the server still runs fine — `/auth/google` just returns a
 clear "Google Sign-In isn't configured on this server yet" error instead of a
 stack trace, and local email/password accounts and the Daily Challenge both
 work regardless.
+
+## Email notifications
+
+Without any setup, the only way someone finds out they got a Word Bounty is
+by opening the app and checking the tab themselves — there's no push
+notification (see the game's own `notifications/README.md` for why) and,
+until you set this up, no email either.
+
+`src/utils/mailer.ts` sends one via [Resend](https://resend.com) —
+`fetch`, not their SDK, the same way `google-auth.service.ts` talks to Google
+directly rather than pulling in a client library for one endpoint call.
+
+1. Sign up at [resend.com](https://resend.com) (free, no credit card — 100
+   emails/day). Create an API key.
+2. Put it in `.env`:
+   ```
+   RESEND_API_KEY=re_...
+   ```
+3. **Leave `MAIL_FROM` as the default to start** —
+   `onboarding@resend.dev` is Resend's shared test domain, and it works with
+   zero further setup, but Resend deliberately restricts it to delivering
+   **only to the email address you signed up to Resend with**. Great for
+   confirming the plumbing works; anyone else gets a 403 you'll see logged
+   as `[mailer] Resend rejected an email to ...`.
+4. **To actually notify real recipients**, verify a domain you own in the
+   Resend dashboard (their guided flow — a few DNS records), then point
+   `MAIL_FROM` at an address on that domain:
+   ```
+   MAIL_FROM="Zeke Mobile <bounties@yourdomain.com>"
+   ```
+
+Without `RESEND_API_KEY` set at all, bounty creation works exactly the same
+— `bounty.service.ts` logs `[mailer] RESEND_API_KEY not set — skipping
+email` and moves on. Sending the email is fire-and-forget from
+`BountySvc.create()`'s perspective either way: a Resend outage or a bad key
+shows up in the server's logs, never as a failed `POST /bounties` for a
+bounty that was already created and paid for.
 
 ## The database
 

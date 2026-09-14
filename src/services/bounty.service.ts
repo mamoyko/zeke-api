@@ -2,6 +2,7 @@ import BountyRepo from "../repositories/bounty.repository";
 import UserRepo from "../repositories/user.repository";
 import { randomWordOptions, ANIME_WORDS, type TAnimeWord } from "../data/anime-words";
 import { badRequest, notFound, unauthorized } from "../utils/errors";
+import { sendEmail } from "../utils/mailer";
 import type { TIncomingBounty, TSentBounty } from "../models/bounty.model";
 
 const WORD_OPTIONS_COUNT = 5;
@@ -49,6 +50,12 @@ export default class BountySvc {
       reward: wager * REWARD_MULTIPLIER,
     });
 
+    // Best-effort — see sendEmail()'s own doc comment for why a mail hiccup
+    // here must never turn into a failure response for a bounty that has
+    // already been created and paid for.
+    const sender = await UserRepo.findById(senderId);
+    void this.notifyRecipient(sender?.name ?? "Someone", recipient.email, bounty.wager, bounty.reward);
+
     return {
       id: bounty.id,
       recipientName: recipient.name,
@@ -59,6 +66,27 @@ export default class BountySvc {
       status: bounty.status as TSentBounty["status"],
       createdAt: bounty.createdAt.toISOString(),
     };
+  }
+
+  /** Lets a recipient know a bounty is waiting for them — the only way they'd
+   * otherwise find out is by opening the app and checking BOUNTY themselves.
+   * Never awaited by a caller that needs its result; see sendEmail(). */
+  private static async notifyRecipient(
+    senderName: string,
+    recipientEmail: string,
+    wager: number,
+    reward: number,
+  ): Promise<void> {
+    await sendEmail(
+      recipientEmail,
+      `${senderName} sent you a Word Bounty`,
+      `<p><strong>${senderName}</strong> just sent you a Word Bounty on Zeke Mobile.</p>
+       <p>They staked <strong>${wager} coins</strong> that you can't solve it.
+       Beat it and you take their stake. Fail, and they walk away with
+       <strong>${reward} coins</strong>.</p>
+       <p>Open the app and check the BOUNTY tab to see it.</p>
+       <p style="color:#7E8770;font-size:12px">— Zeke, probably smug about this</p>`,
+    );
   }
 
   static async listIncoming(userId: string): Promise<TIncomingBounty[]> {

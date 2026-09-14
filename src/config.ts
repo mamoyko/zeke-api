@@ -18,3 +18,11 @@ export const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID as string;
 export const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET as string;
 
 export const googleConfigured = (): boolean => !!GOOGLE_CLIENT_ID && !!GOOGLE_CLIENT_SECRET;
+
+// Only needed to actually email someone when they receive a Word Bounty —
+// see utils/mailer.ts. Without it, bounties still work exactly the same;
+// the recipient just has to notice it themselves in the app.
+export const RESEND_API_KEY = process.env.RESEND_API_KEY as string;
+export const MAIL_FROM = (process.env.MAIL_FROM || "Zeke Mobile <onboarding@resend.dev>") as string;
+
+export const mailConfigured = (): boolean => !!RESEND_API_KEY;
