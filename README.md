@@ -30,10 +30,33 @@ docker compose up -d          # starts Postgres on localhost:5433
 npm install                   # also generates the Prisma client (postinstall)
 cp .env.example .env          # defaults match docker-compose.yml exactly
 npm run prisma:migrate        # creates the tables
+npm run prisma:seed           # optional - see "Test accounts" below
 npm run dev
 ```
 
 That starts it on `http://localhost:4000` with auto-reload on save.
+
+### Test accounts
+
+`npm run prisma:seed` creates three accounts, all with the password
+`password123`:
+
+| Email               | What it starts with                                          |
+| ------------------- | -------------------------------------------------------------- |
+| `test@zeke.dev`     | A 4-day Daily Challenge streak, and a pending Word Bounty from Alice |
+| `alice@zeke.dev`    | 75 coins (spent 25 sending that bounty)                        |
+| `bob@zeke.dev`      | A plain fresh account — a second player with nothing seeded    |
+
+Sign in with any of these in the game instead of creating a fresh account
+each time — useful for trying DAILY and BOUNTY without having to first play
+your way into having a streak or a bounty to look at. Safe to re-run: it
+checks what already exists before creating anything, so running it again
+against a database that already has these accounts just leaves them alone.
+
+This also runs automatically after `npx prisma migrate reset` (Prisma's own
+seed-on-reset behavior, since `package.json` declares
+`"prisma": {"seed": "tsx prisma/seed.ts"}`) — pass `--skip-seed` to that
+command if you want a genuinely empty database instead.
 
 **No Docker?** Point `DATABASE_URL` in `.env` at any Postgres instead — a free
 one from [Neon](https://neon.tech) or [Supabase](https://supabase.com) takes
@@ -92,6 +115,7 @@ one below it.
 | `src/app.ts`                            | Express app: middleware, routes, DB connection     |
 | `src/config.ts`                         | Reads `.env`; safe zero-config defaults            |
 | `prisma/schema.prisma`                  | The four database models — see below              |
+| `prisma/seed.ts`                        | Test accounts — see "Test accounts" above          |
 | `src/utils/prisma.ts`                   | The shared Prisma client                           |
 | `src/utils/token.ts`                    | Signs/verifies session tokens (JWT)                |
 | `src/utils/errors.ts`                   | `HttpError` + `describeError` — used by every controller |
