@@ -371,3 +371,85 @@ npx prisma migrate reset
 
 Drops and recreates the database from the migrations. Local dev only —
 this is destructive.
+
+## Deploying (CI/CD)
+
+`.github/workflows/deploy.yml` deploys this server to an EC2 instance on
+every push to `main` (or manually via "Run workflow"). It builds the
+`Dockerfile` in this repo, pushes it to ECR, then reaches the instance
+through **AWS Systems Manager Run Command** — no SSH key, no open port 22.
+
+The flow: build & push the image → write a deploy script that bootstraps
+Docker/AWS CLI on the box if missing, writes `.env` and the (optional)
+Firebase service account file, pulls the new image, runs `prisma migrate
+deploy` in a one-off container, then stops/recreates the long-lived
+`zeke-mobile-server` container on port 4000 → send that script via
+`aws ssm send-command` targeting instances by tag → poll until SSM reports
+success or failure on every matched instance.
+
+None of the AWS side (EC2 instance, IAM role, ECR repo) exists yet — this
+workflow is the pipeline, not the infrastructure. Someone with AWS access
+needs to set the following up once before the first deploy will succeed.
+
+### AWS prerequisites
+
+- **An EC2 instance** running Amazon Linux (the deploy script uses `dnf`),
+  with the **SSM Agent** running (preinstalled on Amazon Linux 2023) and an
+  **instance profile** attached that grants `AmazonSSMManagedInstanceCore`
+  (so SSM can reach it) and pull access to ECR (`AmazonEC2ContainerRegistryReadOnly`
+  is enough, since the instance only ever pulls).
+- Tag that instance with something identifying, e.g. `Project=zeke-mobile-server`
+  — `EC2_TARGET_TAG_KEY`/`EC2_TARGET_TAG_VALUE` below just need to match it.
+  Multiple instances with the same tag all receive the deploy.
+- **An ECR repository** for the image (e.g. `zeke-mobile-server`).
+- **An IAM role GitHub Actions can assume via OIDC** (no long-lived AWS
+  keys stored in GitHub). It needs a trust policy for
+  `token.actions.githubusercontent.com` scoped to this repo, and permissions
+  for `ecr:GetAuthorizationToken`/`ecr:*` (push access to the one repo),
+  `ssm:SendCommand`, `ssm:ListCommands`, `ssm:ListCommandInvocations`,
+  `ssm:GetCommandInvocation`, scoped to the target instance(s) and the
+  `AWS-RunShellScript` document.
+- **A Postgres database reachable from that EC2 instance** — RDS, Neon,
+  Supabase, or Postgres on the box itself. This workflow doesn't create one;
+  it just needs `DATABASE_URL` (below) to point at it.
+
+### GitHub configuration
+
+Set these under the repo's **Settings → Environments → `production`** (the
+workflow's `environment: production` scopes them there; secrets/variables
+set at the repo level instead of an environment also work, but won't get
+the environment's protection rules).
+
+**Variables** (`vars.*` — not secret, visible in logs):
+
+| Name | Example | Notes |
+|---|---|---|
+| `AWS_REGION` | `ap-southeast-1` | |
+| `ECR_REGISTRY` | `123456789012.dkr.ecr.ap-southeast-1.amazonaws.com` | account-specific |
+| `ECR_REPOSITORY` | `zeke-mobile-server` | |
+| `EC2_TARGET_TAG_KEY` | `Project` | tag key used to select target instance(s) |
+| `EC2_TARGET_TAG_VALUE` | `zeke-mobile-server` | tag value |
+| `MAIL_FROM` | `Zeke Mobile <onboarding@resend.dev>` | see "Email notifications" above |
+
+**Secrets** (`secrets.*` — encrypted, never printed to logs):
+
+| Name | Required? | Notes |
+|---|---|---|
+| `AWS_DEPLOY_ROLE_ARN` | Yes | the OIDC role above |
+| `DATABASE_URL` | Yes | the production Postgres connection string |
+| `JWT_SECRET` | Yes | a long random string — the server can't sign sessions without it |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | No | Google Sign-In stays disabled without these |
+| `RESEND_API_KEY` | No | bounty emails stay disabled without this |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | No | the **full contents** of the Firebase service-account JSON file (paste the whole file as one secret) — push notifications stay disabled without it |
+
+`FIREBASE_SERVICE_ACCOUNT_PATH` itself isn't a secret you set — the
+workflow always points it at `/app/firebase-service-account.json` inside
+the container, and writes whatever `FIREBASE_SERVICE_ACCOUNT_JSON` contains
+(or an empty `{}` placeholder, so the mount always resolves) to that path
+on the instance and bind-mounts it in read-only.
+
+### Deploying
+
+Push to `main`, or run the workflow manually from the Actions tab
+(**Run workflow** → optionally override `image_tag` to redeploy a specific
+commit's image instead of building a new one).
