@@ -21,7 +21,7 @@ export default class BountyRepo {
     return prisma.bounty.findMany({
       where: { recipientId },
       orderBy: { createdAt: "desc" },
-      include: { sender: { select: { name: true } } },
+      include: { sender: { select: { name: true, username: true } } },
     });
   }
 
@@ -29,7 +29,21 @@ export default class BountyRepo {
     return prisma.bounty.findMany({
       where: { senderId },
       orderBy: { createdAt: "desc" },
-      include: { recipient: { select: { name: true, email: true } } },
+      include: { recipient: { select: { name: true, email: true, username: true } } },
+    });
+  }
+
+  /** Recent unique counterparties, newest first — the people you've already
+   * sent a word to or received one from, so compose doesn't need an address. */
+  static listRecentWith(userId: string, take = 40) {
+    return prisma.bounty.findMany({
+      where: { OR: [{ senderId: userId }, { recipientId: userId }] },
+      orderBy: { createdAt: "desc" },
+      take,
+      include: {
+        sender: { select: { id: true, name: true, username: true } },
+        recipient: { select: { id: true, name: true, username: true } },
+      },
     });
   }
 

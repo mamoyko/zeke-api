@@ -36,4 +36,14 @@ export default class DailyCtrl {
       return res.status(status).json({ error: message });
     }
   }
+
+  static async leaderboard(req: Request, res: Response) {
+    try {
+      const result = await DailySvc.leaderboard(req.userId as string);
+      return res.json(result);
+    } catch (error) {
+      const { status, message } = describeError(error);
+      return res.status(status).json({ error: message });
+    }
+  }
 }

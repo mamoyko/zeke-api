@@ -1,9 +1,12 @@
 import BountyRepo from "../repositories/bounty.repository";
+import FriendRepo from "../repositories/friend.repository";
 import UserRepo from "../repositories/user.repository";
 import { randomWordOptions, ANIME_WORDS, type TAnimeWord } from "../data/anime-words";
 import { badRequest, notFound, unauthorized } from "../utils/errors";
 import { sendEmail } from "../utils/mailer";
 import PushSvc from "./push.service";
+import { findPlayer } from "./friend.service";
+import { toPlayerCard, type TPlayerCard } from "../models/user.model";
 import type { TIncomingBounty, TSentBounty } from "../models/bounty.model";
 
 const WORD_OPTIONS_COUNT = 5;
@@ -22,7 +25,7 @@ export default class BountySvc {
 
   static async create(
     senderId: string,
-    recipientEmail: string,
+    handle: string,
     word: string,
     wager: number,
   ): Promise<TSentBounty> {
@@ -33,8 +36,8 @@ export default class BountySvc {
       throw badRequest("That word isn't from the Anime pool. Fetch options first.");
     }
 
-    const recipient = await UserRepo.findByEmail(recipientEmail);
-    if (!recipient) throw notFound("No Zeke Mobile player found with that email.");
+    const recipient = await findPlayer(handle);
+    if (!recipient) throw notFound("No Zeke Mobile player found with that username or email.");
     if (recipient.id === senderId) throw badRequest("You can't send a bounty to yourself.");
 
     const debited = await UserRepo.adjustBalance(senderId, -wager);
@@ -50,6 +53,8 @@ export default class BountySvc {
       wager,
       reward: wager * REWARD_MULTIPLIER,
     });
+
+    await FriendRepo.add(senderId, recipient.id);
 
     // Best-effort — see sendEmail()'s / sendPush()'s own doc comments for why
     // a mail or push hiccup here must never turn into a failure response for
@@ -67,6 +72,7 @@ export default class BountySvc {
     return {
       id: bounty.id,
       recipientName: recipient.name,
+      recipientUsername: recipient.username,
       recipientEmail: recipient.email,
       category: bounty.category,
       wager: bounty.wager,
@@ -113,6 +119,7 @@ export default class BountySvc {
     return rows.map((b) => ({
       id: b.id,
       senderName: b.sender.name,
+      senderUsername: b.sender.username,
       category: b.category,
       wager: b.wager,
       reward: b.reward,
@@ -126,6 +133,7 @@ export default class BountySvc {
     return rows.map((b) => ({
       id: b.id,
       recipientName: b.recipient.name,
+      recipientUsername: b.recipient.username,
       recipientEmail: b.recipient.email,
       category: b.category,
       wager: b.wager,
@@ -133,6 +141,20 @@ export default class BountySvc {
       status: b.status as TSentBounty["status"],
       createdAt: b.createdAt.toISOString(),
     }));
+  }
+
+  static async opponents(userId: string): Promise<TPlayerCard[]> {
+    const rows = await BountyRepo.listRecentWith(userId);
+    const seen = new Set<string>();
+    const out: TPlayerCard[] = [];
+    for (const row of rows) {
+      const other = row.senderId === userId ? row.recipient : row.sender;
+      if (other.id === userId || seen.has(other.id)) continue;
+      seen.add(other.id);
+      out.push(toPlayerCard(other));
+      if (out.length >= 12) break;
+    }
+    return out;
   }
 
   /** Reveals the word — only to the recipient it was sent to, and only while

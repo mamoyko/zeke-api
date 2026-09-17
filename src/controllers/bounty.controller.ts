@@ -4,9 +4,12 @@ import BountySvc from "../services/bounty.service";
 import { badRequest, describeError } from "../utils/errors";
 
 const createSchema = z.object({
-  recipientEmail: z.string().trim().email("Enter a valid email address."),
   word: z.string().trim().min(1),
   wager: z.number().int().positive(),
+  to: z.string().trim().min(1).optional(),
+  recipientEmail: z.string().trim().min(1).optional(),
+}).refine((data) => Boolean(data.to || data.recipientEmail), {
+  message: "Enter a username or email.",
 });
 
 const completeSchema = z.object({
@@ -34,8 +37,13 @@ export default class BountyCtrl {
       const parsed = createSchema.safeParse(req.body);
       if (!parsed.success) throw badRequest(parsed.error.issues[0].message);
 
-      const { recipientEmail, word, wager } = parsed.data;
-      const bounty = await BountySvc.create(req.userId as string, recipientEmail, word, wager);
+      const { to, recipientEmail, word, wager } = parsed.data;
+      const bounty = await BountySvc.create(
+        req.userId as string,
+        to || recipientEmail || "",
+        word,
+        wager,
+      );
       return res.status(201).json(bounty);
     } catch (error) {
       const { status, message } = describeError(error);
@@ -57,6 +65,16 @@ export default class BountyCtrl {
     try {
       const bounties = await BountySvc.listSent(req.userId as string);
       return res.json({ bounties });
+    } catch (error) {
+      const { status, message } = describeError(error);
+      return res.status(status).json({ error: message });
+    }
+  }
+
+  static async opponents(req: Request, res: Response) {
+    try {
+      const players = await BountySvc.opponents(req.userId as string);
+      return res.json({ players });
     } catch (error) {
       const { status, message } = describeError(error);
       return res.status(status).json({ error: message });

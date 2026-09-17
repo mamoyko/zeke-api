@@ -7,6 +7,7 @@ export type TBounty = Bounty;
 export interface TSentBounty {
   id: string;
   recipientName: string;
+  recipientUsername: string;
   recipientEmail: string;
   category: string;
   wager: number;
@@ -21,6 +22,7 @@ export interface TSentBounty {
 export interface TIncomingBounty {
   id: string;
   senderName: string;
+  senderUsername: string;
   category: string;
   wager: number;
   reward: number;

@@ -26,4 +26,22 @@ export default class DailyRepo {
       },
     });
   }
+
+  static listTodayWins(date: string, take = 10) {
+    return prisma.dailyCompletion.findMany({
+      where: { date, won: true },
+      orderBy: [{ mistakes: "asc" }, { userId: "asc" }],
+      take,
+      include: { user: { select: { id: true, name: true, username: true } } },
+    });
+  }
+
+  static listTopStreaks(take = 10) {
+    return prisma.streak.findMany({
+      where: { current: { gt: 0 } },
+      orderBy: [{ current: "desc" }, { longest: "desc" }],
+      take,
+      include: { user: { select: { id: true, name: true, username: true } } },
+    });
+  }
 }

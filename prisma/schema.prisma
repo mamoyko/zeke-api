@@ -17,6 +17,9 @@ datasource db {
 model User {
   id           String   @id @default(uuid())
   name         String
+  /// Public handle used to find someone without knowing their email.
+  /// Lowercase, unique, allocated at signup — see src/utils/username.ts.
+  username     String   @unique
   email        String   @unique
   /// null for a Google-only account — see users.service.ts.
   passwordHash String?  @map("password_hash")
@@ -28,13 +31,31 @@ model User {
   /// Bounty immediately — see bounty.service.ts's SIGNUP_BONUS.
   balance Int @default(100)
 
-  completions     DailyCompletion[]
-  streak          Streak?
-  sentBounties    Bounty[]          @relation("BountySender")
-  receivedBounties Bounty[]         @relation("BountyRecipient")
-  deviceTokens    DeviceToken[]
+  completions      DailyCompletion[]
+  streak           Streak?
+  sentBounties     Bounty[]          @relation("BountySender")
+  receivedBounties Bounty[]          @relation("BountyRecipient")
+  deviceTokens     DeviceToken[]
+  playRewardDays   PlayRewardDay[]
+  friends          Friendship[]      @relation("FriendOwner")
+  friendedBy       Friendship[]      @relation("FriendTarget")
 
   @@map("users")
+}
+
+/// One-way "I know this player" link, so the BOUNTY compose screen can offer
+/// people you've added (or sent a word to) instead of retyping an address.
+model Friendship {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  friendId  String   @map("friend_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User @relation("FriendOwner", fields: [userId], references: [id])
+  friend User @relation("FriendTarget", fields: [friendId], references: [id])
+
+  @@unique([userId, friendId])
+  @@map("friendships")
 }
 
 /// One row per device that's registered for push notifications. A person can
@@ -112,4 +133,21 @@ model Bounty {
   recipient User @relation("BountyRecipient", fields: [recipientId], references: [id])
 
   @@map("bounties")
+}
+
+/// One row per person per UTC day, counting how many PLAY / PANIC wins have
+/// already been paid out as coins. Caps live in play.service.ts — this table
+/// is just the counter the cap is enforced against.
+model PlayRewardDay {
+  userId    String @map("user_id")
+  /// UTC calendar day, "YYYY-MM-DD" — same unit as DailyCompletion.date.
+  date      String
+  playWins  Int    @default(0) @map("play_wins")
+  panicWins Int    @default(0) @map("panic_wins")
+  coins     Int    @default(0)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@id([userId, date])
+  @@map("play_reward_days")
 }

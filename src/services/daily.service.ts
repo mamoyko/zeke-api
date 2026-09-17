@@ -1,6 +1,6 @@
 import DailyRepo from "../repositories/daily.repository";
 import { dayKey, wordForDay } from "../data/daily-words";
-import type { TDailyStatus } from "../models/daily.model";
+import type { TDailyLeaderboard, TDailyStatus } from "../models/daily.model";
 
 function yesterday(dateKey: string): string {
   return dayKey(new Date(Date.parse(`${dateKey}T00:00:00Z`) - 86_400_000));
@@ -62,5 +62,33 @@ export default class DailySvc {
     await DailyRepo.saveStreak(streak);
 
     return this.status(userId);
+  }
+
+  /** Today's solvers by fewest mistakes, plus current Daily streaks. Optional
+   * on the DAILY tab — a failed fetch must never block the word itself. */
+  static async leaderboard(userId: string): Promise<TDailyLeaderboard> {
+    const date = dayKey();
+    const [wins, streaks] = await Promise.all([
+      DailyRepo.listTodayWins(date),
+      DailyRepo.listTopStreaks(),
+    ]);
+
+    return {
+      date,
+      today: wins.map((row, i) => ({
+        rank: i + 1,
+        name: row.user.name,
+        username: row.user.username,
+        mistakes: row.mistakes,
+        me: row.userId === userId,
+      })),
+      streaks: streaks.map((row, i) => ({
+        rank: i + 1,
+        name: row.user.name,
+        username: row.user.username,
+        streak: row.current,
+        me: row.userId === userId,
+      })),
+    };
   }
 }
