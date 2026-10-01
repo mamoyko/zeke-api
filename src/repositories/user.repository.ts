@@ -64,8 +64,15 @@ export default class UserRepo {
     return `${base.slice(0, 12)}${randomBytes(2).toString("hex")}`;
   }
 
-  static async createLocal(name: string, email: string, passwordHash: string): Promise<TUser> {
-    const username = await this.allocateUsername(name);
+  /** `username`, when given, is used as-is (the caller has checked it's
+   * valid and free); otherwise one is allocated from the name. */
+  static async createLocal(
+    name: string,
+    email: string,
+    passwordHash: string,
+    username?: string,
+  ): Promise<TUser> {
+    username = username ? normalizeUsername(username) : await this.allocateUsername(name);
     return prisma.user.create({
       data: { name: name.trim(), email: email.trim().toLowerCase(), passwordHash, username },
     });

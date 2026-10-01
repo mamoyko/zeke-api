@@ -1,5 +1,7 @@
 import DailyRepo from "../repositories/daily.repository";
-import { dayKey, wordForDay } from "../data/daily-words";
+import { dayKey } from "../data/daily-words";
+import { wordOfTheDay, type WordOfTheDay } from "../data/wotd";
+import { badRequest, conflict } from "../utils/errors";
 import type { TDailyLeaderboard, TDailyStatus } from "../models/daily.model";
 
 function yesterday(dateKey: string): string {
@@ -7,11 +9,25 @@ function yesterday(dateKey: string): string {
 }
 
 export default class DailySvc {
-  /** The word every player gets today. No auth needed to know *what* it is — only completing it needs an account, to track a streak against. */
-  static today(): { date: string; word: string; category: string } {
-    const date = dayKey();
-    const { word, category } = wordForDay(date);
-    return { date, word, category };
+  /** The word every player gets today, with its Word of the Day label and
+   * clues. No auth needed to know *what* it is — only completing it needs an
+   * account, to track a streak against. */
+  static today(): WordOfTheDay {
+    return wordOfTheDay(dayKey());
+  }
+
+  /**
+   * A past day's word, for the v2 game's ‹ › day browser. Practice only —
+   * nothing here is recorded, and `/daily/complete` always means today.
+   * Future days are refused so the browser can't spoil tomorrow's word.
+   */
+  static word(date: string): WordOfTheDay & { isToday: boolean } {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
+      throw badRequest("Dates look like YYYY-MM-DD.");
+    }
+    const today = dayKey();
+    if (date > today) throw badRequest("No peeking at future words.");
+    return { ...wordOfTheDay(date), isToday: date === today };
   }
 
   static async status(userId: string): Promise<TDailyStatus> {
@@ -35,8 +51,16 @@ export default class DailySvc {
    * what makes "one shot" a server-enforced rule rather than just an honor
    * system in the client.
    */
-  static async complete(userId: string, won: boolean, mistakes: number): Promise<TDailyStatus> {
+  static async complete(
+    userId: string,
+    won: boolean,
+    mistakes: number,
+    playedOn?: string,
+  ): Promise<TDailyStatus> {
     const date = dayKey();
+    if (playedOn !== undefined && playedOn !== date) {
+      throw conflict("That day's word is over — this round was practice.");
+    }
 
     if (await DailyRepo.findCompletion(userId, date)) {
       return this.status(userId);

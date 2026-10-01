@@ -7,6 +7,7 @@ import requireAuth from "../middleware/require-auth.middleware";
 router.use(requireAuth);
 
 router.get("/today", DailyCtrl.today);
+router.get("/word/:date", DailyCtrl.word);
 router.get("/status", DailyCtrl.status);
 router.get("/leaderboard", DailyCtrl.leaderboard);
 router.post("/complete", DailyCtrl.complete);

@@ -6,11 +6,23 @@ import { badRequest, describeError } from "../utils/errors";
 const completeSchema = z.object({
   won: z.boolean(),
   mistakes: z.number().int().min(0),
+  /** The day the client played. Optional; when sent, a result for a day
+   * that has already ended is refused rather than filed under today. */
+  date: z.string().optional(),
 });
 
 export default class DailyCtrl {
   static async today(_req: Request, res: Response) {
     return res.json(DailySvc.today());
+  }
+
+  static async word(req: Request, res: Response) {
+    try {
+      return res.json(DailySvc.word(req.params.date));
+    } catch (error) {
+      const { status, message } = describeError(error);
+      return res.status(status).json({ error: message });
+    }
   }
 
   static async status(req: Request, res: Response) {
@@ -28,8 +40,8 @@ export default class DailyCtrl {
       const parsed = completeSchema.safeParse(req.body);
       if (!parsed.success) throw badRequest("Missing or invalid result.");
 
-      const { won, mistakes } = parsed.data;
-      const result = await DailySvc.complete(req.userId as string, won, mistakes);
+      const { won, mistakes, date } = parsed.data;
+      const result = await DailySvc.complete(req.userId as string, won, mistakes, date);
       return res.json(result);
     } catch (error) {
       const { status, message } = describeError(error);

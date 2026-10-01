@@ -4,16 +4,26 @@ import AuthSvc from "../services/auth.service";
 import GoogleAuthSvc from "../services/google-auth.service";
 import { badRequest, describeError } from "../utils/errors";
 
-const signupSchema = z.object({
-  name: z.string().trim().min(1, "Enter your name."),
-  email: z.string().trim().email("Enter a valid email address."),
-  password: z.string().min(6, "Password needs at least 6 characters."),
-});
+/** `name` may be left out when a `username` is given — the display name
+ * then starts as the username. */
+const signupSchema = z
+  .object({
+    name: z.string().trim().min(1, "Enter your name.").optional(),
+    username: z.string().trim().optional(),
+    email: z.string().trim().email("Enter a valid email address."),
+    password: z.string().min(6, "Password needs at least 6 characters."),
+  })
+  .refine((b) => b.name || b.username, { message: "Pick a username." });
 
-const loginSchema = z.object({
-  email: z.string().trim().email(),
-  password: z.string(),
-});
+/** `login` is a username or an email; `email` is still accepted from older
+ * clients. */
+const loginSchema = z
+  .object({
+    login: z.string().trim().min(1).optional(),
+    email: z.string().trim().min(1).optional(),
+    password: z.string(),
+  })
+  .refine((b) => b.login || b.email);
 
 const googleSchema = z.object({
   code: z.string().min(1),
@@ -27,8 +37,8 @@ export default class AuthCtrl {
       const parsed = signupSchema.safeParse(req.body);
       if (!parsed.success) throw badRequest(parsed.error.issues[0].message);
 
-      const { name, email, password } = parsed.data;
-      const result = await AuthSvc.signup(name, email, password);
+      const { name, username, email, password } = parsed.data;
+      const result = await AuthSvc.signup(name ?? username!, email, password, username);
       return res.status(201).json(result);
     } catch (error) {
       const { status, message } = describeError(error);
@@ -39,10 +49,10 @@ export default class AuthCtrl {
   static async login(req: Request, res: Response) {
     try {
       const parsed = loginSchema.safeParse(req.body);
-      if (!parsed.success) throw badRequest("Enter a valid email and password.");
+      if (!parsed.success) throw badRequest("Enter your username and password.");
 
-      const { email, password } = parsed.data;
-      const result = await AuthSvc.login(email, password);
+      const { login, email, password } = parsed.data;
+      const result = await AuthSvc.login((login ?? email)!, password);
       return res.json(result);
     } catch (error) {
       const { status, message } = describeError(error);

@@ -161,9 +161,10 @@ the token you get back from signup/login/Google.
 | POST   | `/auth/login`            |   –   | `{email, password}`                  | `{token, user}`                                     |
 | POST   | `/auth/google`           |   –   | `{code, codeVerifier, redirectUri}`  | `{token, user}`                                     |
 | GET    | `/auth/me`               |   ✓   | —                                      | `{user}`                                            |
-| GET    | `/daily/today`           |   ✓   | —                                      | `{date, word, category}`                            |
+| GET    | `/daily/today`           |   ✓   | —                                      | `{date, word, category, label, clues}` — today's Word of the Day |
+| GET    | `/daily/word/:date`      |   ✓   | —                                      | Same, plus `isToday`, for a past `YYYY-MM-DD` (practice only; future dates refused) |
 | GET    | `/daily/status`          |   ✓   | —                                      | `{date, playedToday, won, streak, longest}`         |
-| POST   | `/daily/complete`        |   ✓   | `{won, mistakes}`                    | Same shape as `/daily/status`, after recording it   |
+| POST   | `/daily/complete`        |   ✓   | `{won, mistakes, date?}`             | Same shape as `/daily/status`, after recording it. With `date`, 409 if that day is already over |
 | GET    | `/bounties/word-options` |   ✓   | —                                      | `{words: [{word, category}, ...]}`                  |
 | GET    | `/bounties/wallet`       |   ✓   | —                                      | `{balance}`                                         |
 | POST   | `/bounties`              |   ✓   | `{recipientEmail, word, wager}`      | The new bounty, sender-shaped (no word revealed back — you already know it) |
@@ -171,6 +172,9 @@ the token you get back from signup/login/Google.
 | GET    | `/bounties/sent`         |   ✓   | —                                      | `{bounties: [...]}`, with each one's status          |
 | GET    | `/bounties/:id/play`     |   ✓   | —                                      | `{id, word, category, wager, reward}` — only for the actual recipient |
 | POST   | `/bounties/:id/complete` |   ✓   | `{won, mistakes}`                    | `{status, wager, reward}`                           |
+| POST   | `/play/reward`           |   ✓   | `{source}` (`"play"` \| `"panic"`)   | `{awarded, balance, capped, playWins, panicWins}`   |
+| POST   | `/play/score`            |   ✓   | `{score, rounds}`                    | `{stored}` — banks a finished v2 NORMAL run          |
+| GET    | `/play/leaderboard?period=` |   ✓   | — (`today` \| `week` \| `all`)     | `{period, rows: [{rank, name, username, score, rounds, me}]}` — top 8 best runs, plus yours |
 | POST   | `/notifications/device-token` |   ✓   | `{token, platform}`            | `{ok: true}`                                        |
 | DELETE | `/notifications/device-token` |   ✓   | `{token}`                       | `{ok: true}`                                        |
 
@@ -190,6 +194,13 @@ the token you get back from signup/login/Google.
   The rest of the game already trusts the client with its own word in plain
   text (see the main project's `scripts/game_state.gd`), so this matches that
   existing trust model rather than introducing a new one.
+- **Word of the Day is the daily word.** `src/data/wotd.ts` gives the days in
+  its "on this day" table (from the v2 design) a history word and three clues;
+  every other day keeps the regular pool word with generated clues. Either way
+  it's one word per UTC date, so the one-shot rule and streaks below still hold.
+- **GLOBAL RANKING scores are client-reported**, like coin rewards: the only
+  check is that a run can't average more than a perfect round's 160 points per
+  round. "This week" starts Monday 00:00 UTC.
 - **"One shot" is enforced here, not just in the game's UI.** `POST
   /daily/complete` is idempotent per user per day — calling it twice the same
   day returns the first result rather than overwriting it. A modified client

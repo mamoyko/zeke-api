@@ -37,6 +37,7 @@ model User {
   receivedBounties Bounty[]          @relation("BountyRecipient")
   deviceTokens     DeviceToken[]
   playRewardDays   PlayRewardDay[]
+  scoreRuns        ScoreRun[]
   friends          Friendship[]      @relation("FriendOwner")
   friendedBy       Friendship[]      @relation("FriendTarget")
 
@@ -150,4 +151,21 @@ model PlayRewardDay {
 
   @@id([userId, date])
   @@map("play_reward_days")
+}
+
+/// One finished NORMAL-mode run from the v2 game: rounds chained together
+/// until the brain ran empty (or the player walked away). GLOBAL RANKING
+/// ranks each player's single best run inside a period — see
+/// play.service.ts's leaderboard().
+model ScoreRun {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  score     Int
+  rounds    Int
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([createdAt])
+  @@map("score_runs")
 }

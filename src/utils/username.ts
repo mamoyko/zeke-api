@@ -15,6 +15,9 @@ export function normalizeUsername(value: string): string {
   return value.trim().toLowerCase();
 }
 
+/** What a player may pick as their handle at signup. */
+export const USERNAME_PATTERN = /^[a-z0-9_]{3,20}$/;
+
 export function looksLikeEmail(value: string): boolean {
   return value.includes("@");
 }
